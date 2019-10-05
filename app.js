@@ -1,21 +1,28 @@
 //jshint esversion:6
 require('dotenv').config();
+const aws = require('aws-sdk');
 const express = require('express');
 const mongoose = require('mongoose');
 const ejs = require('ejs');
 const session = require('express-session');
 const passport = require('passport');
+const flash = require('connect-flash');
 const passportLocalMongoose = require('passport-local-mongoose');
 const bodyParser = require('body-parser');
+const GoogleStrategy = require('passport-google-oauth20').Strategy;
+const findOrCreate = require('mongoose-findorcreate');
+
+
 
 const app = express();
 
 app.use(express.static("assets"));
 app.set('view engine', 'ejs');
 
+app.use(flash());
 app.use(bodyParser.urlencoded({extended:true}));
 app.use(session({
-  secret: 'edffdfdfdfdf',
+  secret: process.env.SECRET,
   resave: false,
   saveUninitialized: true,
   cookie: { secure: true }
@@ -31,11 +38,12 @@ const userSchema = new mongoose.Schema(
   {
     name: String,
     email: String,
-    password: String
+    password: String,
+    googleId: String
   }) ;
 
 userSchema.plugin(passportLocalMongoose);
-// userSchema.plugin(findOrCreate);
+userSchema.plugin(findOrCreate);
 
 // Using userSchema to create a mongoose model with collection named User
 const User = new mongoose.model("User", userSchema);
@@ -52,9 +60,41 @@ passport.deserializeUser(function(id, done) {
   });
 });
 
+passport.use(new GoogleStrategy({
+    clientID: process.env.CLIENT_ID,
+    clientSecret: process.env.CLIENT_SECRET,
+    callbackURL: "https://nemesis-net.herokuapp.com/auth/google/networth",
+    userProfileURL: "https://www.googleapis.com/oauth2/v3/userinfo"
+  },
+  function(accessToken, refreshToken, profile, cb) {
+    console.log(profile);
+   User.findOne({googleId:profile.id, username:profile.displayName}, function(err,existingUser){
+      console.log(profile);
+      if(existingUser){
+        return cb(err,existingUser);
+      } else{
+        const newUser = new User({
+          googleId: profile.id,
+          username:profile.displayName
+        });
+        newUser.save(function(err){
+          return cb(err,newUser);
+        });
+      }
+    });
+  }
+));
+
 app.get("/", function(req, res){
   res.render("index");
 });
+app.get("/auth/google",passport.authenticate("google", {scope: ["profile"]}));
+app.get("/auth/google/networth",
+  passport.authenticate("google", { failureRedirect: '/signIn' }),
+  function(req, res) {
+    // Successful authentication, redirect home.
+    res.redirect('/networth1');
+  });
 app.get("/signIn", function(req, res){
   res.render("signin");
 });
@@ -63,6 +103,9 @@ app.get("/signUp", function(req, res){
     data: {},
     errors: {}
   });
+});
+app.get("/networth1", function(req,res){
+  res.render("networth");
 });
 app.get("/networth", function(req,res){
   if(req.isAuthenticated()){
@@ -102,7 +145,11 @@ User.register({username: req.body.username}, req.body.password, function(error, 
 
 });
 
-app.post("/signIn", passport.authenticate("local"), function(req,res){
+app.post("/signIn", passport.authenticate("local",
+{
+  failureFlash: 'Invalid Username or Password'
+}), 
+function(req,res){
 const user = new User({
   username: req.body.username,
   password: req.body.password
@@ -110,7 +157,7 @@ const user = new User({
 
 req.login(user, function(error){
   if(error){
-    console.log(error);
+    console.log(failureFlash);
   }
   else{
     passport.authenticate("local")(req,res,function(){
@@ -127,7 +174,7 @@ app.listen(process.env.PORT || 3000, function(){
 
 
 
-//Sign-in authentication
+/*Sign-in authentication
 
 function validate() {
   var username = document.getElementById("email").value;
@@ -142,8 +189,6 @@ function validate() {
       alert("Please enter the password.");
       return false;
   }
-
-  /*
 
   for(i = 0; i < user.length;i++)
   { if(username == user[i].username && password == user[i].password) {
@@ -160,6 +205,6 @@ function validate() {
     else if (password !== user[n].password){
           alert("Incorrect password");
       return false;}
-    }
+    }}
   */
-}
+
